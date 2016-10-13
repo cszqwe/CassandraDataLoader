@@ -6,7 +6,7 @@ import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.*;
-
+import java.sql.Timestamp;
 /**
  * Created by li-me on 29/9/2016.
  */
@@ -137,13 +137,13 @@ public class DataLoader {
 				+ "OL_W_ID int," + "OL_D_ID int," + "OL_O_ID int,"
 				+ "OL_NUMBER int," + "OL_DELIVERY_D timestamp,"
 				+ "OL_SUPPLY_W_ID int," + "OL_I_ID int,"
-				+ "OL_QUANTITY double," + "OL_AMOUNT double,"
+				+ "OL_QUANTITY double," + "OL_AMOUNT double," + "OL_DIST_INFO varchar,"
 				+ "PRIMARY KEY (OL_W_ID, OL_D_ID, OL_O_ID, OL_NUMBER));");
 		session.execute("CREATE TABLE IF NOT EXISTS  d40Cas.order_line("
 				+ "OL_W_ID int," + "OL_D_ID int," + "OL_O_ID int,"
 				+ "OL_NUMBER int," + "OL_DELIVERY_D timestamp,"
 				+ "OL_SUPPLY_W_ID int," + "OL_I_ID int,"
-				+ "OL_QUANTITY double," + "OL_AMOUNT double,"
+				+ "OL_QUANTITY double," + "OL_AMOUNT double," + "OL_DIST_INFO varchar,"
 				+ "PRIMARY KEY (OL_W_ID, OL_D_ID, OL_O_ID, OL_NUMBER));");
 		log("Finished Creating OrderLine");
 	}
@@ -161,7 +161,10 @@ public class DataLoader {
 				+ "C_PAYMENT_CNT int," + "C_DELIVERY_CNT int,"
 				+ "W_TAX DOUBLE," + "D_TAX DOUBLE," + "W_NAME VARCHAR,"
 				+ "D_NAME VARCHAR," + "PRIMARY KEY (C_W_ID, C_D_ID, C_ID));");
-		session.execute("create index if not exists on d8Cas.customer (C_BALANCE);");
+		session.execute("CREATE TABLE IF NOT EXISTS  d8Cas.balance(" + "ID int,"
+				+ "C_BALANCE DOUBLE," + "C_W_ID int," + "C_D_ID int," + "C_ID int,"
+				+ "PRIMARY KEY (ID, C_BALANCE , C_W_ID, C_D_ID, C_ID)) with CLUSTERING ORDER BY (C_BALANCE DESC);");
+		
 		session.execute("CREATE TABLE IF NOT EXISTS  d40Cas.customer("
 				+ "C_W_ID int," + "C_D_ID int," + "C_ID int,"
 				+ "C_FIRST VARCHAR," + "C_MIDDLE VARCHAR," + "C_LAST VARCHAR,"
@@ -174,7 +177,10 @@ public class DataLoader {
 				+ "C_PAYMENT_CNT int," + "C_DELIVERY_CNT int,"
 				+ "W_TAX DOUBLE," + "D_TAX DOUBLE," + "W_NAME VARCHAR,"
 				+ "D_NAME VARCHAR," + "PRIMARY KEY (C_W_ID, C_D_ID, C_ID));");
-		session.execute("create index if not exists on d40Cas.customer (C_BALANCE);");
+		session.execute("CREATE TABLE IF NOT EXISTS  d8Cas.balance(" + "ID int,"
+				+ "C_BALANCE DOUBLE," + "C_W_ID int," + "C_D_ID int," + "C_ID int,"
+				+ "PRIMARY KEY (ID, C_BALANCE , C_W_ID, C_D_ID, C_ID)) with CLUSTERING ORDER BY (C_BALANCE DESC);");
+		
 		log("Finished Creating CustomerTable");
 	}
 
@@ -482,12 +488,33 @@ public class DataLoader {
 		 */
 		cluster = Cluster.builder().addContactPoint(nodeIP).build();
 		session = cluster.connect(keyspace);
-
+		BatchStatement batch = new BatchStatement();
+		int count = 0;
 		String order_line = path + "/" + "order-line.csv";
 		String input = null;
 		String queryD, queryDU;
 		BufferedReader br = null;
 		String[] list;
+		PreparedStatement ps = session.prepare("INSERT INTO order_line(OL_W_ID, OL_D_ID, OL_O_ID, OL_NUMBER, OL_DELIVERY_D, OL_SUPPLY_W_ID, OL_I_ID, OL_QUANTITY, OL_AMOUNT)"
+						+ " VALUES("
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ");");
 		try {
 			FileReader fr = new FileReader(order_line);
 			br = new BufferedReader(fr);
@@ -503,12 +530,15 @@ public class DataLoader {
 				list[5].replace("/", "-");
 				String time;
 				if (list[5].length() > 10)
-					time = "'" + list[5].substring(0,10) + " " + list[5].substring(10,list[5].length()) + "'";
+					time = list[5].substring(0,10) + " " + list[5].substring(10,list[5].length());
 				else 
-					time = "'2016-08-15 16:00:40.649'";
+					time = "2016-08-15 16:00:40.649";
+				Timestamp timeStamp = new Timestamp(System.currentTimeMillis());
+				timeStamp = Timestamp.valueOf(time);
 				double ol_amount = Double.parseDouble(list[6]);
 				int ol_supply_w_id = Integer.parseInt(list[7]);
 				double ol_quantity = Double.parseDouble(list[8]);
+				
 				queryD = "INSERT INTO order_line(OL_W_ID, OL_D_ID, OL_O_ID, OL_NUMBER, OL_DELIVERY_D, OL_SUPPLY_W_ID, OL_I_ID, OL_QUANTITY, OL_AMOUNT)"
 						+ " VALUES("
 						+ ol_w_id
@@ -518,9 +548,9 @@ public class DataLoader {
 						+ ol_o_id
 						+ ","
 						+ ol_number
-						+ ","
+						+ ",'"
 						+ time
-						+ ","
+						+ "',"
 						+ ol_supply_w_id
 						+ ","
 						+ ol_i_id
@@ -529,11 +559,24 @@ public class DataLoader {
 						+ ","
 						+ ol_amount
 						+ ");";
-				session.execute(queryD);
-				log("QueryD is " + queryD);
+				//session.execute(queryD);
+				//log("QueryD is " + queryD + " batch size " + batch.size());
+				if (ol_w_id != 0){
+					batch.add(ps.bind(ol_w_id, ol_d_id, ol_o_id, ol_number, timeStamp, ol_supply_w_id, ol_i_id,ol_quantity,ol_amount));
+					count ++;
+				}
+				if (count > 10000){
+					count = 0;
+					log("QueryD is " + queryD + " batch size " + batch.size());
+					session.execute(batch);
+					batch.clear();
+					batch = new BatchStatement();
+				
+				}
 				input = br.readLine();
 			}
-
+			session.execute(batch);
+			batch.clear();
 			br.close();
 		} catch (FileNotFoundException ex) {
 			log("Cannot find the file: " + order_line);
@@ -571,8 +614,73 @@ public class DataLoader {
 		Map<Integer, Double> dTaxMap = new HashMap<Integer, Double>();
 		Map<Integer, String> wNameMap = new HashMap<Integer, String>();
 		Map<Integer, String> dNameMap = new HashMap<Integer, String>();
+		BatchStatement batch = new BatchStatement();
 		BufferedReader br = null;
 		String[] listC,listW,listD;
+		int count;
+		PreparedStatement ps = session.prepare("INSERT INTO customer(C_W_ID, C_D_ID, C_ID, C_FIRST, C_MIDDLE, C_LAST, C_STREET_1, C_STREET_2, C_CITY, C_STATE, C_ZIP, C_PHONE, C_SINCE, C_CREDIT_LIM, C_BALANCE, C_PAYMENT_CNT, C_CREDIT, C_DISCOUNT, C_YTD_PAYMENT, C_DELIVERY_CNT, W_TAX, D_TAX, W_NAME, D_NAME)"
+						+ " VALUES("
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ");");
+		PreparedStatement	ps2 = session.prepare("INSERT INTO balance(ID, C_BALANCE, C_W_ID, C_D_ID, C_ID)"
+						+ " VALUES("
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+ ","
+						+ "?"
+						+");");
+
 		//get the w_tax and w_name from warehouse and insert into two maps
 		try {
 			FileReader fr = new FileReader(warehouse);
@@ -622,7 +730,7 @@ public class DataLoader {
 			FileReader fr = new FileReader(customer);
 			br = new BufferedReader(fr);
 			input = br.readLine();
-			
+			count = 0;
 			while (input != null) {
 				listC = input.trim().replaceAll("\\s", "").split(",");
 				int c_w_id = Integer.parseInt(listC[0]);
@@ -638,8 +746,16 @@ public class DataLoader {
 				String c_zip = "'" + listC[10] + "'";
 				String c_phone = "'" + listC[11] + "'";
 				listC[12].replace("/", "-");
-				String c_since= "'" + listC[12].substring(0,10) + " " + listC[12].substring(10,listC[12].length()) + "'";
-				
+				String c_since=listC[12].substring(0,10) + " " + listC[12].substring(10,listC[12].length());
+				Timestamp timeStamp = new Timestamp(System.currentTimeMillis());
+				try{
+					timeStamp = Timestamp.valueOf(c_since);
+				}
+				catch (Exception e){
+					c_since = 	"2016-08-15 16:00:40.649";
+					timeStamp = Timestamp.valueOf(c_since);
+
+				}
 				double c_credit_lim = Double.parseDouble(listC[14]);
 				double c_balance = Double.parseDouble(listC[16]);
 				int c_payment_cnt = Integer.parseInt(listC[18]);
@@ -651,6 +767,9 @@ public class DataLoader {
 				double d_tax = dTaxMap.get(c_d_id);
 				String w_name = wNameMap.get(c_w_id);
 				String d_name = dNameMap.get(c_d_id);
+				
+				batch.add(ps.bind(c_w_id,c_d_id,c_id,c_first,c_middle,c_last,c_street_1, c_street_2,c_city,c_state,c_zip,c_phone,timeStamp,
+					c_credit_lim,c_balance,c_payment_cnt,c_credit,c_discount, c_ytd_payment,c_delivery_cnt,w_tax,d_tax,w_name,d_name));
 				queryC = "INSERT INTO customer(C_W_ID, C_D_ID, C_ID, C_FIRST, C_MIDDLE, C_LAST, C_STREET_1, C_STREET_2, C_CITY, C_STATE, C_ZIP, C_PHONE, C_SINCE, C_CREDIT_LIM, C_BALANCE, C_PAYMENT_CNT, C_CREDIT, C_DISCOUNT, C_YTD_PAYMENT, C_DELIVERY_CNT, W_TAX, D_TAX, W_NAME, D_NAME)"
 						+ " VALUES("
 						+ c_w_id
@@ -702,8 +821,29 @@ public class DataLoader {
 						+ ","
 						+ d_name
 						+ ");";
-				session.execute(queryC);
-				log("QueryC is " + queryC);
+
+				//session.execute(queryC);
+				count++;
+				batch.add(ps2.bind(1,c_balance,c_w_id,c_d_id,c_id));
+				// queryC = "INSERT INTO balance(ID, C_BALANCE, C_W_ID, C_D_ID, C_ID)"
+				// 		+ " VALUES("
+				// 		+ "1"
+				// 		+ ","
+				// 		+ c_balance
+				// 		+ ","
+				// 		+ c_w_id
+				// 		+ ","
+				// 		+ c_d_id
+				// 		+ ","
+				// 		+ c_id
+				// 		+");";
+				//session.execute(queryC);
+				if (count > 1000){
+					session.execute(batch);
+					count = 0;
+					batch.clear();
+					log("QueryC is " + queryC);
+				}		
 				input = br.readLine();
 			}
 			
@@ -713,6 +853,8 @@ public class DataLoader {
 		} catch (IOException ce) {
 			log("There are some errors when reading the file: " + customer);
 		}
+		session.execute(batch);
+		batch.clear();
 		session.close();
 		cluster.close();
 		log("Customer's insertion finished.");
@@ -745,9 +887,9 @@ public class DataLoader {
 		// DataLoader.createDistrictUnchangedTable();
 		// DataLoader.createStockTable();
 		// DataLoader.createItemTable();
-		// DataLoader.createOrderTable();
+		//DataLoader.createOrderTable();
 		//DataLoader.createOrderLineTable();
-		DataLoader.createCustomerTable();
+		//DataLoader.createCustomerTable();
 		DataLoader.close();
 		// DataLoader.insertWareHouseTable(nodeIP,keyspaceD8,pathD8);
 		// DataLoader.insertWareHouseTable(nodeIP,keyspaceD40,pathD40);
@@ -759,9 +901,9 @@ public class DataLoader {
 		// DataLoader.insertItemTable(nodeIP,keyspaceD40,pathD40);
 		// DataLoader.insertOrderTable(nodeIP,keyspaceD8,pathD8);
 		// DataLoader.insertOrderTable(nodeIP,keyspaceD40,pathD40);
-		// DataLoader.insertOrderLineTable(nodeIP, keyspaceD8, pathD8);
+		 DataLoader.insertOrderLineTable(nodeIP, keyspaceD8, pathD8);
 		// DataLoader.insertOrderLineTable(nodeIP,keyspaceD40,pathD40);
-		DataLoader.insertCustomerTable(nodeIP, keyspaceD8, pathD8);
+		//DataLoader.insertCustomerTable(nodeIP, keyspaceD8, pathD8);
 		//DataLoader.insertCustomerTable(nodeIP, keyspaceD40, pathD40);
 	}
 }
